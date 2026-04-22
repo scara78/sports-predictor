@@ -114,7 +114,7 @@ export default function HistoryPage() {
     setSidebarSport(sport === 'all' ? null : sport);
   };
 
-  // Fetch initial data
+  // Fetch initial data - removed from useCallback to break dependency cycle
   const fetchHistory = useCallback(async (reset = true) => {
     if (reset) {
       setLoading(true);
@@ -205,7 +205,7 @@ export default function HistoryPage() {
 
   useEffect(() => {
     fetchHistory(true);
-  }, [selectedSport, dateRange]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [fetchHistory]);
 
   // Get best performing sport safely
   const getBestSport = () => {
