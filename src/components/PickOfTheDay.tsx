@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Prediction, SPORTS } from '@/lib/types';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -29,20 +29,33 @@ interface PickOfTheDayProps {
 }
 
 function useCountdown(targetDate: Date) {
+  // Memoize the target timestamp to prevent unnecessary re-renders
+  const targetTime = useMemo(() => targetDate.getTime(), [targetDate.getTime()]);
+  
   const [timeLeft, setTimeLeft] = useState<{
     hours: number;
     minutes: number;
     seconds: number;
-  } | null>(null);
-  const targetTimeRef = useRef(targetDate.getTime());
+  } | null>(() => {
+    // Initialize state with calculated value
+    const now = new Date();
+    const difference = targetTime - now.getTime();
+
+    if (difference <= 0) {
+      return null;
+    }
+
+    return {
+      hours: Math.floor(difference / (1000 * 60 * 60)),
+      minutes: Math.floor((difference / (1000 * 60)) % 60),
+      seconds: Math.floor((difference / 1000) % 60),
+    };
+  });
 
   useEffect(() => {
-    // Update ref if target date changes
-    targetTimeRef.current = targetDate.getTime();
-
     const calculateTimeLeft = () => {
       const now = new Date();
-      const difference = targetTimeRef.current - now.getTime();
+      const difference = targetTime - now.getTime();
 
       if (difference <= 0) {
         return null;
@@ -55,14 +68,12 @@ function useCountdown(targetDate: Date) {
       };
     };
 
-    setTimeLeft(calculateTimeLeft());
-
     const timer = setInterval(() => {
       setTimeLeft(calculateTimeLeft());
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [targetDate]);
+  }, [targetTime]);
 
   return timeLeft;
 }
