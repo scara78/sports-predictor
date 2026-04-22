@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Prediction, SPORTS } from '@/lib/types';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -34,11 +34,15 @@ function useCountdown(targetDate: Date) {
     minutes: number;
     seconds: number;
   } | null>(null);
+  const targetTimeRef = useRef(targetDate.getTime());
 
   useEffect(() => {
+    // Update ref if target date changes
+    targetTimeRef.current = targetDate.getTime();
+
     const calculateTimeLeft = () => {
       const now = new Date();
-      const difference = targetDate.getTime() - now.getTime();
+      const difference = targetTimeRef.current - now.getTime();
 
       if (difference <= 0) {
         return null;
