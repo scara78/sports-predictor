@@ -93,6 +93,15 @@ export interface VenueInfo {
   capacity?: number;
 }
 
+// Betting suggestion
+export interface BettingSuggestion {
+  tip: string;
+  odds?: string;
+  confidence: 'Scăzut' | 'Mediu' | 'Ridicat' | 'Foarte Ridicat';
+  reasoning: string;
+  value: 'Standard' | 'Valoare Bună' | 'Valoare Excelentă';
+}
+
 // Enhanced AI Analysis structure
 export interface EnhancedAnalysis {
   preview: string;
@@ -104,6 +113,9 @@ export interface EnhancedAnalysis {
   confidenceRationale?: string;  // Why confident/not
   injuryImpact?: string;         // Summary of injury impact
   weatherImpact?: string;        // Summary of weather impact
+  // Betting suggestions
+  bettingSuggestions?: BettingSuggestion[];
+  bestBet?: BettingSuggestion;
 }
 
 // Games

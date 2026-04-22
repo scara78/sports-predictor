@@ -19,6 +19,7 @@ import {
   CloudRain,
   ChevronDown,
   Trophy,
+  Coins,
 } from 'lucide-react';
 import { TeamLogo } from './TeamLogo';
 import { ConfidenceBadge } from './ConfidenceMeter';
@@ -29,6 +30,7 @@ import { ProbabilityBar } from './ProbabilityBar';
 import { PickDistributionBar } from './PickDistributionBar';
 import { ConnectedFavoriteButton } from './FavoriteButton';
 import { ShareButton } from './ShareButton';
+import { BettingSuggestionsSection } from './BettingSuggestionsSection';
 import { useStreak } from '@/hooks/use-streak';
 import { usePickHistory } from '@/hooks/use-pick-history';
 import { toast } from '@/components/ui/sonner';
@@ -49,6 +51,7 @@ export function PredictionCard({
 }: PredictionCardProps) {
   const [detailsOpen, setDetailsOpen] = useState(defaultExpanded);
   const [analysisOpen, setAnalysisOpen] = useState(defaultExpanded);
+  const [bettingOpen, setBettingOpen] = useState(defaultExpanded);
   const { recordPick, hasPickedToday, currentStreak } = useStreak();
   const { addPick, getPick } = usePickHistory();
 
@@ -58,26 +61,24 @@ export function PredictionCard({
   const userPick = getPick(prediction.gameId);
 
   const handleMakePick = () => {
-    // Record the pick in history
     addPick({
       gameId: prediction.gameId,
       sport: game.sport,
-      pick: 'home', // Will be overridden by PickDistributionBar
+      pick: 'home',
       homeTeam: game.homeTeam.name,
       awayTeam: game.awayTeam.name,
       gameTime: new Date(game.startTime).getTime(),
       confidence: prediction.confidence,
     });
 
-    // Update streak
     if (!hasPickedToday) {
       recordPick();
       toast.success(
         currentStreak === 0
-          ? '🔥 Streak started!'
-          : `🔥 ${currentStreak + 1} day streak!`,
+          ? '🔥 Serie pornită!'
+          : `🔥 Serie de ${currentStreak + 1} zile!`,
         {
-          description: 'Keep picking daily to build your streak!',
+          description: 'Continuă să faci predicții zilnic pentru a-ți menține seria!',
         }
       );
     }
@@ -85,6 +86,9 @@ export function PredictionCard({
 
   const sportInfo = SPORTS[game.sport];
   const hasAnalysis = prediction.enhancedAnalysis || prediction.llmAnalysis;
+  const hasBettingSuggestions =
+    prediction.enhancedAnalysis?.bestBet ||
+    (prediction.enhancedAnalysis?.bettingSuggestions?.length ?? 0) > 0;
 
   const predictedTeam =
     prediction.predictedWinner === 'home'
@@ -99,16 +103,14 @@ export function PredictionCard({
     return draws !== undefined ? `${wins}-${losses}-${draws}` : `${wins}-${losses}`;
   };
 
-  // Confidence color based on level
   const getConfidenceColor = (confidence: number) => {
     if (confidence >= 70) return 'text-emerald-600 dark:text-emerald-400';
     if (confidence >= 55) return 'text-amber-600 dark:text-amber-400';
     return 'text-rose-600 dark:text-rose-400';
   };
 
-  // Get team colors with fallbacks
   const homeColor = game.homeTeam.primaryColor || sportInfo.color;
-  const awayColor = game.awayTeam.primaryColor || '#6b7280'; // gray-500 fallback
+  const awayColor = game.awayTeam.primaryColor || '#6b7280';
   const predictedTeamColor = predictedTeam?.primaryColor || sportInfo.color;
   const isHighConfidence = prediction.confidence >= 75;
 
@@ -122,7 +124,7 @@ export function PredictionCard({
         '--team-color': predictedTeamColor,
       } as React.CSSProperties}
     >
-      {/* Header - Always visible */}
+      {/* Header */}
       <div className="px-4 py-3 border-b bg-muted/30">
         <div className="flex items-center justify-between">
           <Badge
@@ -138,8 +140,8 @@ export function PredictionCard({
             </span>
             <ConnectedFavoriteButton predictionId={prediction.id} size="sm" />
             <ShareButton
-              title={`${game.awayTeam.abbreviation} @ ${game.homeTeam.abbreviation} Prediction`}
-              text={`Check out this ${sportInfo.name} prediction: ${predictedTeam?.name || 'Draw'} with ${prediction.confidence}% confidence!`}
+              title={`${game.awayTeam.abbreviation} @ ${game.homeTeam.abbreviation} Predicție`}
+              text={`Verifică această predicție ${sportInfo.name}: ${predictedTeam?.name || 'Egal'} cu ${prediction.confidence}% încredere!`}
               size="sm"
             />
           </div>
@@ -147,7 +149,7 @@ export function PredictionCard({
       </div>
 
       <CardContent className="p-4 space-y-3">
-        {/* Matchup Display - Always visible, more compact */}
+        {/* Matchup Display */}
         <div className="flex items-center justify-center gap-4 sm:gap-6 py-2">
           {/* Away Team */}
           <div
@@ -189,11 +191,11 @@ export function PredictionCard({
           </div>
         </div>
 
-        {/* Prediction Summary - Always visible, single line */}
+        {/* Prediction Summary */}
         <div className="flex items-center justify-center gap-2 py-2 px-3 rounded-lg bg-muted/50 border">
           <Trophy className="h-4 w-4 text-amber-500" />
           <span className="font-semibold">
-            {predictedTeam ? predictedTeam.name : 'Draw'}
+            {predictedTeam ? predictedTeam.name : 'Egal'}
           </span>
           <span className="text-muted-foreground">•</span>
           <span className={cn('font-bold', getConfidenceColor(prediction.confidence))}>
@@ -212,12 +214,12 @@ export function PredictionCard({
           onPick={handleMakePick}
         />
 
-        {/* Details Section - Collapsible */}
+        {/* Details Section */}
         <Collapsible open={detailsOpen} onOpenChange={setDetailsOpen}>
           <CollapsibleTrigger className="text-muted-foreground">
             <span className="flex items-center gap-2">
               <BarChart3 className="h-4 w-4" />
-              Details
+              Detalii
             </span>
           </CollapsibleTrigger>
           <CollapsibleContent>
@@ -225,7 +227,7 @@ export function PredictionCard({
               {/* Win Probability Bar */}
               <div className="space-y-2">
                 <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                  Win Probability
+                  Probabilitate Victorie
                 </p>
                 <ProbabilityBar
                   homeTeam={game.homeTeam.abbreviation}
@@ -237,7 +239,7 @@ export function PredictionCard({
                 />
                 {prediction.drawProbability && prediction.drawProbability > 0 && (
                   <div className="text-center p-1.5 rounded-md bg-muted/30 text-sm">
-                    <span className="text-muted-foreground">Draw: </span>
+                    <span className="text-muted-foreground">Egal: </span>
                     <span className="font-bold">
                       {(prediction.drawProbability * 100).toFixed(0)}%
                     </span>
@@ -261,7 +263,7 @@ export function PredictionCard({
               {prediction.factors.length > 0 && (
                 <div>
                   <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">
-                    Key Factors
+                    Factori Cheie
                   </p>
                   <div className="space-y-1">
                     {prediction.factors.slice(0, 3).map((factor, i) => (
@@ -290,15 +292,15 @@ export function PredictionCard({
           </CollapsibleContent>
         </Collapsible>
 
-        {/* AI Analysis Section - Collapsible */}
+        {/* AI Analysis Section */}
         <Collapsible open={analysisOpen} onOpenChange={setAnalysisOpen}>
           <CollapsibleTrigger className="text-muted-foreground">
             <span className="flex items-center gap-2">
               <Sparkles className="h-4 w-4 text-purple-500" />
-              AI Analysis
+              Analiză AI
               {!hasAnalysis && !isAnalyzing && (
                 <Badge variant="outline" className="ml-2 text-xs">
-                  Click to generate
+                  Click pentru generare
                 </Badge>
               )}
               {isAnalyzing && <Spinner size="sm" className="ml-2" />}
@@ -316,7 +318,7 @@ export function PredictionCard({
                   className="w-full py-2.5 text-sm font-medium text-primary hover:bg-primary/10 rounded-md transition-colors flex items-center justify-center gap-2 border border-dashed"
                 >
                   <Sparkles className="h-4 w-4" />
-                  Get AI Analysis
+                  Generează Analiză AI
                 </button>
               )}
 
@@ -324,7 +326,7 @@ export function PredictionCard({
               {isAnalyzing && (
                 <div className="flex items-center justify-center py-4 gap-2 text-muted-foreground">
                   <Spinner size="md" />
-                  <span className="text-sm">Analyzing matchup...</span>
+                  <span className="text-sm">Se analizează meciul...</span>
                 </div>
               )}
 
@@ -342,7 +344,7 @@ export function PredictionCard({
                       <div className="flex items-center gap-1.5">
                         <BarChart3 className="h-3.5 w-3.5 text-blue-500" />
                         <span className="text-xs font-medium text-muted-foreground uppercase">
-                          Key Insights
+                          Insight-uri Cheie
                         </span>
                       </div>
                       <ul className="space-y-1">
@@ -365,7 +367,7 @@ export function PredictionCard({
                       <div className="flex items-center gap-1.5">
                         <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
                         <span className="text-xs font-medium text-muted-foreground uppercase">
-                          Watch Out
+                          Atenție
                         </span>
                       </div>
                       <ul className="space-y-1">
@@ -388,7 +390,7 @@ export function PredictionCard({
                       <div className="flex items-center gap-1.5 mb-1">
                         <Swords className="h-3.5 w-3.5 text-purple-600" />
                         <span className="text-xs font-medium text-purple-700 dark:text-purple-400 uppercase">
-                          Key Matchup
+                          Duelul Cheie
                         </span>
                       </div>
                       <p className="text-sm text-foreground">
@@ -403,7 +405,7 @@ export function PredictionCard({
                       <div className="flex items-center gap-1.5 mb-1">
                         <Zap className="h-3.5 w-3.5 text-amber-600" />
                         <span className="text-xs font-medium text-amber-700 dark:text-amber-400 uppercase">
-                          X-Factor
+                          Factorul X
                         </span>
                       </div>
                       <p className="text-sm text-foreground">
@@ -418,7 +420,7 @@ export function PredictionCard({
                       <div className="flex items-center gap-1.5 mb-1">
                         <Brain className="h-3.5 w-3.5 text-cyan-600" />
                         <span className="text-xs font-medium text-muted-foreground uppercase">
-                          Why This Confidence
+                          De Ce Această Încredere
                         </span>
                       </div>
                       <p className="text-sm text-muted-foreground">
@@ -434,7 +436,7 @@ export function PredictionCard({
                         <HeartPulse className="h-4 w-4 text-rose-500 mt-0.5 flex-shrink-0" />
                         <span className="text-muted-foreground">
                           <span className="font-medium text-rose-600 dark:text-rose-400">
-                            Injuries:
+                            Accidentați:
                           </span>{' '}
                           {prediction.enhancedAnalysis.injuryImpact}
                         </span>
@@ -445,7 +447,7 @@ export function PredictionCard({
                         <CloudRain className="h-4 w-4 text-blue-500 mt-0.5 flex-shrink-0" />
                         <span className="text-muted-foreground">
                           <span className="font-medium text-blue-600 dark:text-blue-400">
-                            Weather:
+                            Vreme:
                           </span>{' '}
                           {prediction.enhancedAnalysis.weatherImpact}
                         </span>
@@ -464,6 +466,43 @@ export function PredictionCard({
             </div>
           </CollapsibleContent>
         </Collapsible>
+
+        {/* Betting Suggestions Section */}
+        {(hasAnalysis && hasBettingSuggestions) && (
+          <Collapsible open={bettingOpen} onOpenChange={setBettingOpen}>
+            <CollapsibleTrigger className="text-muted-foreground">
+              <span className="flex items-center gap-2">
+                <Coins className="h-4 w-4 text-emerald-500" />
+                Sugestii Pariuri
+                <Badge variant="secondary" className="ml-1 text-xs bg-emerald-100 text-emerald-700 border-emerald-200">
+                  Nou
+                </Badge>
+              </span>
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <div className="mt-2">
+                <BettingSuggestionsSection
+                  bettingSuggestions={prediction.enhancedAnalysis?.bettingSuggestions}
+                  bestBet={prediction.enhancedAnalysis?.bestBet}
+                />
+              </div>
+            </CollapsibleContent>
+          </Collapsible>
+        )}
+
+        {/* Show betting button if analysis exists but no suggestions yet */}
+        {hasAnalysis && !hasBettingSuggestions && onAnalyze && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onAnalyze();
+            }}
+            className="w-full py-2 text-sm font-medium text-emerald-700 hover:bg-emerald-50 dark:hover:bg-emerald-950/20 rounded-md transition-colors flex items-center justify-center gap-2 border border-dashed border-emerald-300"
+          >
+            <Coins className="h-4 w-4" />
+            Generează Sugestii Pariuri
+          </button>
+        )}
       </CardContent>
     </Card>
   );
