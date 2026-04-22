@@ -1,4 +1,4 @@
-import Anthropic from '@anthropic-ai/sdk';
+import OpenAI from 'openai';
 import { Game, Prediction, SPORTS, EnhancedAnalysis } from './types';
 import { PredictionFactor } from './types';
 import { TeamInjuryReport } from './data-sources/injuries';
@@ -7,13 +7,18 @@ import { WeatherConditions } from './data-sources/weather';
 import { getWeatherSummaryForLLM } from './factors/weather';
 import { buildSportSpecificInstructions, getScoringContext } from './prompts';
 
-// Initialize Anthropic client (uses ANTHROPIC_API_KEY env var)
-const anthropic = new Anthropic();
+// Initialize OpenAI-compatible client pointing to custom API
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY || 'dummy-key',
+  baseURL: process.env.OPENAI_BASE_URL || 'https://ruter1.scara.ovh/v1',
+});
+
+const DEFAULT_MODEL = process.env.OPENAI_MODEL || 'gpt-3.5-turbo';
 
 interface AnalysisResult {
   analysis: string;
   keyFactors: string[];
-  confidenceAdjustment: number; // -10 to +10
+  confidenceAdjustment: number;
   riskFactors: string[];
 }
 
@@ -29,9 +34,6 @@ interface EnhancedAnalysisResult {
   weatherImpact?: string;
 }
 
-/**
- * Enhanced game context for LLM analysis
- */
 export interface GameAnalysisContext {
   homeStreak?: { type: 'win' | 'loss'; count: number };
   awayStreak?: { type: 'win' | 'loss'; count: number };
@@ -48,6 +50,41 @@ export interface GameAnalysisContext {
 }
 
 /**
+ * Call the custom OpenAI-compatible API
+ */
+async function callLLM(prompt: string, maxTokens: number = 1024): Promise<string> {
+  const response = await openai.chat.completions.create({
+    model: DEFAULT_MODEL,
+    max_tokens: maxTokens,
+    messages: [
+      {
+        role: 'user',
+        content: prompt,
+      },
+    ],
+  });
+
+  const content = response.choices[0]?.message?.content;
+  if (!content) {
+    throw new Error('No content in LLM response');
+  }
+  return content;
+}
+
+/**
+ * Parse JSON from LLM response (handles markdown code blocks)
+ */
+function parseJsonFromResponse<T>(text: string): T {
+  // Remove markdown code blocks if present
+  const cleaned = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+  const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) {
+    throw new Error('Could not parse JSON from response');
+  }
+  return JSON.parse(jsonMatch[0]) as T;
+}
+
+/**
  * Generate LLM analysis for a game matchup
  */
 export async function analyzeMatchup(
@@ -55,10 +92,9 @@ export async function analyzeMatchup(
   prediction: Prediction
 ): Promise<AnalysisResult> {
   const sportInfo = SPORTS[game.sport];
-
-  // Calculate win percentages
   const homeRecord = game.homeTeam.record;
   const awayRecord = game.awayTeam.record;
+
   const homeWinPct = homeRecord
     ? ((homeRecord.wins + (homeRecord.draws || 0) * 0.5) /
         (homeRecord.wins + homeRecord.losses + (homeRecord.draws || 0))) * 100
@@ -79,58 +115,27 @@ CURRENT SEASON RECORDS:
 - ${game.homeTeam.name}: ${homeRecord?.wins || 0}W - ${homeRecord?.losses || 0}L${homeRecord?.draws ? ` - ${homeRecord.draws}D` : ''} (${homeWinPct.toFixed(1)}% win rate)
 - ${game.awayTeam.name}: ${awayRecord?.wins || 0}W - ${awayRecord?.losses || 0}L${awayRecord?.draws ? ` - ${awayRecord.draws}D` : ''} (${awayWinPct.toFixed(1)}% win rate)
 
-STATISTICAL PREDICTION (based on records + home advantage):
+STATISTICAL PREDICTION:
 - Predicted Winner: ${prediction.predictedWinner === 'home' ? game.homeTeam.name : prediction.predictedWinner === 'away' ? game.awayTeam.name : 'Draw'}
 - ${game.homeTeam.name} Win Probability: ${(prediction.homeWinProbability * 100).toFixed(1)}%
 - ${game.awayTeam.name} Win Probability: ${(prediction.awayWinProbability * 100).toFixed(1)}%
 ${prediction.drawProbability ? `- Draw Probability: ${(prediction.drawProbability * 100).toFixed(1)}%` : ''}
 - Model Confidence: ${prediction.confidence}%
 
-ANALYSIS GUIDELINES:
-1. Base your analysis ONLY on the records and statistics provided
-2. Consider home field advantage for ${sportInfo.name}
-3. Note any significant record disparities
-4. Be realistic about prediction uncertainty - no sports prediction is ever 100% certain
-5. Only adjust confidence if the data strongly supports it
-
-Respond in JSON format:
+Respond in JSON format only:
 {
   "analysis": "2-3 sentence analysis based on the records and matchup",
-  "keyFactors": ["Factor based on data 1", "Factor based on data 2", "Factor based on data 3"],
+  "keyFactors": ["Factor 1", "Factor 2", "Factor 3"],
   "confidenceAdjustment": 0,
-  "riskFactors": ["Acknowledge any game can have surprises", "Any record-based concern"]
+  "riskFactors": ["Risk 1", "Risk 2"]
 }`;
 
   try {
-    const message = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 1024,
-      messages: [
-        {
-          role: 'user',
-          content: prompt,
-        },
-      ],
-    });
-
-    // Extract text content
-    const textContent = message.content.find((c) => c.type === 'text');
-    if (!textContent || textContent.type !== 'text') {
-      throw new Error('No text content in response');
-    }
-
-    // Parse JSON response
-    const jsonMatch = textContent.text.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-      throw new Error('Could not parse JSON from response');
-    }
-
-    const result: AnalysisResult = JSON.parse(jsonMatch[0]);
-    return result;
+    const text = await callLLM(prompt);
+    return parseJsonFromResponse<AnalysisResult>(text);
   } catch (error) {
     console.error('LLM analysis error:', error);
 
-    // Return accurate fallback analysis based on actual data
     const favored = prediction.homeWinProbability > prediction.awayWinProbability
       ? game.homeTeam
       : game.awayTeam;
@@ -168,7 +173,6 @@ export async function analyzeMatchupEnhanced(
   const homeRecord = game.homeTeam.record;
   const awayRecord = game.awayTeam.record;
 
-  // Build context sections
   const homeContext = buildTeamContext(game.homeTeam.name, homeRecord, {
     streak: context.homeStreak,
     restDays: context.homeRestDays,
@@ -183,23 +187,12 @@ export async function analyzeMatchupEnhanced(
     avgScore: context.awayAvgScore,
   });
 
-  // Build factors summary
   const factorsSummary = context.factors?.length
-    ? context.factors
-        .map((f) => `- ${f.name}: ${f.description}`)
-        .join('\n')
+    ? context.factors.map((f) => `- ${f.name}: ${f.description}`).join('\n')
     : 'No additional factors available';
 
-  // Build injury summary
-  const injurySummary = getInjurySummaryForLLM(
-    context.homeInjuries,
-    context.awayInjuries
-  );
-
-  // Build weather summary
+  const injurySummary = getInjurySummaryForLLM(context.homeInjuries, context.awayInjuries);
   const weatherSummary = getWeatherSummaryForLLM(context.weather);
-
-  // Build sport-specific instructions
   const sportInstructions = buildSportSpecificInstructions(game.sport);
   const scoringContext = getScoringContext(game.sport);
 
@@ -234,47 +227,22 @@ ${sportInstructions}
 
 ${scoringContext}
 
-INSTRUCTIONS:
-1. Write a 2-sentence preview that mentions SPECIFIC stats (streak lengths, rest days, records, injuries)
-2. Create 3-4 bullet points that are UNIQUE to THIS matchup - reference actual numbers and sport-specific insights
-3. Identify 1-2 risk factors specific to this game using sport-specific risk patterns
-4. Identify the key matchup that will decide this game
-5. Name an X-factor (unexpected element that could swing the outcome)
-6. Explain why you are or aren't confident in this prediction
-7. Use actual data - never make up statistics
-8. Consider the sport-specific metrics and patterns listed above
-
-Respond in JSON format:
+Respond in JSON format only:
 {
   "preview": "2-sentence game preview with specific stats",
-  "bullets": ["Bullet with specific stat 1", "Bullet with specific stat 2", "Bullet with specific stat 3"],
-  "risks": ["Specific risk factor 1", "Specific risk factor 2"],
+  "bullets": ["Bullet 1", "Bullet 2", "Bullet 3"],
+  "risks": ["Risk 1", "Risk 2"],
   "keyMatchup": "The key matchup that will decide this game",
   "xFactor": "An unexpected element that could swing the outcome",
   "confidenceRationale": "Why this prediction is confident or uncertain",
   "injuryImpact": "How injuries affect this game (if applicable)",
-  "weatherImpact": "How weather affects this game (if applicable, for outdoor sports)",
+  "weatherImpact": "How weather affects this game (if applicable)",
   "confidenceAdjustment": 0
 }`;
 
   try {
-    const message = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 1024,
-      messages: [{ role: 'user', content: prompt }],
-    });
-
-    const textContent = message.content.find((c) => c.type === 'text');
-    if (!textContent || textContent.type !== 'text') {
-      throw new Error('No text content in response');
-    }
-
-    const jsonMatch = textContent.text.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-      throw new Error('Could not parse JSON from response');
-    }
-
-    return JSON.parse(jsonMatch[0]) as EnhancedAnalysisResult;
+    const text = await callLLM(prompt);
+    return parseJsonFromResponse<EnhancedAnalysisResult>(text);
   } catch (error) {
     console.error('Enhanced LLM analysis error:', error);
     return generateFallbackEnhancedAnalysis(game, prediction, context);
@@ -336,26 +304,20 @@ function generateFallbackEnhancedAnalysis(
   context: GameAnalysisContext
 ): EnhancedAnalysisResult {
   const favored = prediction.predictedWinner === 'home' ? game.homeTeam : game.awayTeam;
-  const underdog = prediction.predictedWinner === 'home' ? game.awayTeam : game.homeTeam;
   const bullets: string[] = [];
   const risks: string[] = [];
 
-  // Build preview
   let preview = `${favored.name} enters as the favorite with a ${(Math.max(prediction.homeWinProbability, prediction.awayWinProbability) * 100).toFixed(0)}% win probability. `;
 
   if (context.homeStreak || context.awayStreak) {
     const homeStreakText = context.homeStreak
       ? `${game.homeTeam.name} on a ${context.homeStreak.count}-game ${context.homeStreak.type} streak`
       : '';
-    const awayStreakText = context.awayStreak
-      ? `${game.awayTeam.name} on a ${context.awayStreak.count}-game ${context.awayStreak.type} streak`
-      : '';
-    preview += homeStreakText || awayStreakText || '';
+    preview += homeStreakText || `${game.awayTeam.name} on a ${context.awayStreak?.count}-game ${context.awayStreak?.type} streak` || '';
   } else {
     preview += 'Both teams looking to build momentum in this matchup.';
   }
 
-  // Build bullets
   if (game.homeTeam.record && game.awayTeam.record) {
     bullets.push(
       `${game.homeTeam.name} is ${game.homeTeam.record.wins}-${game.homeTeam.record.losses}, ` +
@@ -363,42 +325,19 @@ function generateFallbackEnhancedAnalysis(
     );
   }
 
-  if (context.homeRestDays !== undefined || context.awayRestDays !== undefined) {
-    if (context.homeRestDays === 0) {
-      bullets.push(`${game.homeTeam.name} playing on zero days rest (back-to-back)`);
-    } else if (context.awayRestDays === 0) {
-      bullets.push(`${game.awayTeam.name} playing on zero days rest (back-to-back)`);
-    } else if (context.homeRestDays !== undefined && context.awayRestDays !== undefined) {
-      const diff = Math.abs(context.homeRestDays - context.awayRestDays);
-      if (diff >= 2) {
-        const rested = context.homeRestDays > context.awayRestDays ? game.homeTeam : game.awayTeam;
-        bullets.push(`${rested.name} has ${diff}+ more days rest`);
-      }
-    }
+  if (context.homeLast5) {
+    bullets.push(`${game.homeTeam.name} is ${context.homeLast5.wins}-${context.homeLast5.losses} in last 5 games`);
   }
-
-  if (context.homeLast5 || context.awayLast5) {
-    if (context.homeLast5) {
-      bullets.push(`${game.homeTeam.name} is ${context.homeLast5.wins}-${context.homeLast5.losses} in last 5 games`);
-    }
-    if (context.awayLast5) {
-      bullets.push(`${game.awayTeam.name} is ${context.awayLast5.wins}-${context.awayLast5.losses} in last 5 games`);
-    }
+  if (context.awayLast5) {
+    bullets.push(`${game.awayTeam.name} is ${context.awayLast5.wins}-${context.awayLast5.losses} in last 5 games`);
   }
 
   bullets.push(`Home advantage factors into ${game.homeTeam.name}'s probability`);
 
-  // Build risks
   if (prediction.confidence < 65) {
     risks.push('Close matchup - either team can win');
   }
-
-  if (context.homeStreak?.type === 'loss' || context.awayStreak?.type === 'loss') {
-    const losingTeam = context.homeStreak?.type === 'loss' ? game.homeTeam : game.awayTeam;
-    risks.push(`${losingTeam.name} may be due for a bounce-back performance`);
-  } else {
-    risks.push('Any game can produce unexpected results');
-  }
+  risks.push('Any game can produce unexpected results');
 
   return {
     preview,
@@ -409,14 +348,13 @@ function generateFallbackEnhancedAnalysis(
 }
 
 /**
- * Enrich a prediction with LLM analysis (legacy plain text format)
+ * Enrich a prediction with LLM analysis
  */
 export async function enrichPredictionWithAnalysis(
   game: Game,
   prediction: Prediction,
   context?: GameAnalysisContext
 ): Promise<Prediction> {
-  // If context is provided, use enhanced analysis
   if (context) {
     const enhanced = await analyzeMatchupEnhanced(game, prediction, context);
 
@@ -425,14 +363,7 @@ export async function enrichPredictionWithAnalysis(
       Math.min(90, prediction.confidence + enhanced.confidenceAdjustment)
     );
 
-    // Also generate legacy llmAnalysis for backward compatibility
-    const llmAnalysis = `${enhanced.preview}
-
-Key Insights:
-${enhanced.bullets.map((b) => `• ${b}`).join('\n')}
-
-Risk Factors:
-${enhanced.risks.map((r) => `• ${r}`).join('\n')}`;
+    const llmAnalysis = `${enhanced.preview}\n\nKey Insights:\n${enhanced.bullets.map((b) => `• ${b}`).join('\n')}\n\nRisk Factors:\n${enhanced.risks.map((r) => `• ${r}`).join('\n')}`;
 
     const enhancedAnalysis: EnhancedAnalysis = {
       preview: enhanced.preview,
@@ -453,7 +384,6 @@ ${enhanced.risks.map((r) => `• ${r}`).join('\n')}`;
     };
   }
 
-  // Fallback to basic analysis
   const analysis = await analyzeMatchup(game, prediction);
 
   const adjustedConfidence = Math.max(
@@ -461,13 +391,7 @@ ${enhanced.risks.map((r) => `• ${r}`).join('\n')}`;
     Math.min(90, prediction.confidence + analysis.confidenceAdjustment)
   );
 
-  const llmAnalysis = `${analysis.analysis}
-
-Key Factors:
-${analysis.keyFactors.map((f) => `• ${f}`).join('\n')}
-
-Risk Factors:
-${analysis.riskFactors.map((r) => `• ${r}`).join('\n')}`;
+  const llmAnalysis = `${analysis.analysis}\n\nKey Factors:\n${analysis.keyFactors.map((f) => `• ${f}`).join('\n')}\n\nRisk Factors:\n${analysis.riskFactors.map((r) => `• ${r}`).join('\n')}`;
 
   return {
     ...prediction,
@@ -479,9 +403,7 @@ ${analysis.riskFactors.map((r) => `• ${r}`).join('\n')}`;
 /**
  * Generate quick summary for multiple predictions
  */
-export async function generatePredictionsSummary(
-  predictions: Prediction[]
-): Promise<string> {
+export async function generatePredictionsSummary(predictions: Prediction[]): Promise<string> {
   const highConfidence = predictions.filter((p) => p.confidence >= 75);
   const tossups = predictions.filter((p) => p.confidence < 60);
 
@@ -493,19 +415,12 @@ ${highConfidence.map((p) => `- ${p.game?.homeTeam.name} vs ${p.game?.awayTeam.na
 Toss-ups (${tossups.length}):
 ${tossups.map((p) => `- ${p.game?.homeTeam.name} vs ${p.game?.awayTeam.name}: ${p.confidence}% confidence`).join('\n')}
 
-Provide a 2-3 sentence factual summary based on the data. Do not make claims beyond what the data shows.`;
+Provide a 2-3 sentence factual summary. Respond with plain text only.`;
 
   try {
-    const message = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 256,
-      messages: [{ role: 'user', content: prompt }],
-    });
-
-    const textContent = message.content.find((c) => c.type === 'text');
-    return textContent?.type === 'text' ? textContent.text : 'Analysis unavailable.';
+    return await callLLM(prompt, 256);
   } catch (error) {
     console.error('Summary generation error:', error);
-    return `Today's slate includes ${highConfidence.length} games where one team is clearly favored based on record, and ${tossups.length} closely matched games. Predictions are based on season records and home advantage.`;
+    return `Today's slate includes ${highConfidence.length} games where one team is clearly favored, and ${tossups.length} closely matched games.`;
   }
 }
